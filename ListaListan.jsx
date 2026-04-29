@@ -1,9 +1,32 @@
 import { useState, useEffect, useRef } from "react";
 
+
 const FONT_LINK = document.createElement("link");
 FONT_LINK.rel = "stylesheet";
 FONT_LINK.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Fraunces:ital,opsz,wght@0,9..144,600;1,9..144,400&display=swap";
 document.head.appendChild(FONT_LINK);
+
+// ─── Firebase ─────────────────────────────────────────────────────────────────
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDMJY5XlX6nzIaDdC0g4To9eXiTS6RnMOI",
+  authDomain: "listalistan.firebaseapp.com",
+  projectId: "listalistan",
+  storageBucket: "listalistan.firebasestorage.app",
+  messagingSenderId: "1060510592590",
+  appId: "1:1060510592590:web:eaa2d282a5417aba44dd1f",
+  measurementId: "G-HG8PWWB4MD"
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+const DATA_DOC = doc(db, "listalistan", "shared");
+
+async function saveData(data) {
+  try { await setDoc(DATA_DOC, { payload: JSON.stringify(data) }); } catch(e) { console.error("Save error", e); }
+}
 
 const PALETTE = ["#FFD6E0","#FFDAB9","#C8F0D8","#E0D4F7","#C8E6F5","#FFF3B0","#F5C6EC","#B8DFC8","#FFE0CC","#D4EAF7"];
 const PRIORITY_OPTS = [
@@ -91,8 +114,7 @@ function makeDefault() {
   };
 }
 
-function loadData() { try { const r=localStorage.getItem("listalistan_v3"); return r?JSON.parse(r):makeDefault(); } catch { return makeDefault(); } }
-function saveData(d) { try { localStorage.setItem("listalistan_v3",JSON.stringify(d)); } catch {} }
+function loadLocal() { try { const r=localStorage.getItem("listalistan_v3"); return r?JSON.parse(r):makeDefault(); } catch { return makeDefault(); } }
 
 function countItems(list) {
   let total=(list.items||[]).length, done=(list.items||[]).filter(i=>i.done).length;
@@ -719,9 +741,46 @@ function HomeScreen({data,setData,userName,onSwitchUser}) {
 }
 
 export default function App() {
-  const [data,setData]=useState(()=>loadData());
+  const [data,setData]=useState(null);
   const [userName,setUserName]=useState(null);
-  useEffect(()=>saveData(data),[data]);
+  const [syncing,setSyncing]=useState(true);
+
+  // Listen to Firestore in real-time
+  useEffect(()=>{
+    const unsub = onSnapshot(DATA_DOC, (snap)=>{
+      if(snap.exists()){
+        try { setData(JSON.parse(snap.data().payload)); } catch { setData(makeDefault()); }
+      } else {
+        const d=makeDefault();
+        setData(d);
+        saveData(d);
+      }
+      setSyncing(false);
+    }, (err)=>{
+      console.error("Firestore error", err);
+      setData(loadLocal());
+      setSyncing(false);
+    });
+    return ()=>unsub();
+  },[]);
+
+  // Save to Firestore on every data change
+  const prevData = useRef(null);
+  useEffect(()=>{
+    if(data && data !== prevData.current){
+      prevData.current = data;
+      saveData(data);
+    }
+  },[data]);
+
+  if(syncing) return (
+    <div style={{...S.app,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"linear-gradient(160deg,#ffeef5 0%,#f0f7ff 60%,#f0fff4 100%)"}}>
+      <style>{`@keyframes bobble{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}`}</style>
+      <div style={{animation:"bobble 1.5s ease-in-out infinite",width:"60%",maxWidth:200}}><HouseIllustration/></div>
+      <p style={{color:"#b090cc",fontSize:15,marginTop:16,fontFamily:"'Nunito',sans-serif"}}>Ansluter... 🌸</p>
+    </div>
+  );
+
   if(!userName) return <SplashScreen onEnter={name=>setUserName(name)}/>;
   return <HomeScreen data={data} setData={setData} userName={userName} onSwitchUser={()=>setUserName(null)}/>;
 }
