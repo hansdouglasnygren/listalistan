@@ -28,6 +28,42 @@ async function saveData(data) {
   try { await setDoc(DATA_DOC, { payload: JSON.stringify(data) }); } catch(e) { console.error("Save error", e); }
 }
 
+// ─── Notifications ────────────────────────────────────────────────────────────
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  const result = await Notification.requestPermission();
+  return result === "granted";
+}
+
+function sendNotification(title, body) {
+  if (Notification.permission !== "granted") return;
+  try {
+    new Notification(title, {
+      body,
+      icon: "/icon.png",
+      badge: "/icon.png",
+      vibrate: [200, 100, 200],
+    });
+  } catch(e) { console.log("Notification error", e); }
+}
+
+// Compare two data states and find what changed
+function findChanges(oldData, newData, userName) {
+  if (!oldData || !newData) return null;
+  const oldAct = (oldData.activity||[]);
+  const newAct = (newData.activity||[]);
+  if (newAct.length > oldAct.length) {
+    const latest = newAct[0];
+    // Only notify if it was done by someone else
+    if (latest && !latest.msg.startsWith(userName)) {
+      return latest.msg;
+    }
+  }
+  return null;
+}
+
 const PALETTE = ["#FFD6E0","#FFDAB9","#C8F0D8","#E0D4F7","#C8E6F5","#FFF3B0","#F5C6EC","#B8DFC8","#FFE0CC","#D4EAF7"];
 const PRIORITY_OPTS = [
   { id: null,     label: "Ingen",  emoji: "⚪", color: "#ccc",    bg: "#f5f5f5" },
@@ -744,12 +780,33 @@ export default function App() {
   const [data,setData]=useState(null);
   const [userName,setUserName]=useState(null);
   const [syncing,setSyncing]=useState(true);
+  const prevData = useRef(null);
+  const userNameRef = useRef(null);
+
+  useEffect(()=>{ userNameRef.current = userName; },[userName]);
+
+  // Ask for notification permission when user picks their name
+  async function handleEnter(name) {
+    setUserName(name);
+    await requestNotificationPermission();
+  }
 
   // Listen to Firestore in real-time
   useEffect(()=>{
     const unsub = onSnapshot(DATA_DOC, (snap)=>{
       if(snap.exists()){
-        try { setData(JSON.parse(snap.data().payload)); } catch { setData(makeDefault()); }
+        try {
+          const newData = JSON.parse(snap.data().payload);
+          // Check for changes made by the other person
+          if (prevData.current && userNameRef.current) {
+            const change = findChanges(prevData.current, newData, userNameRef.current);
+            if (change) {
+              sendNotification("ListaListan 🏡", change);
+            }
+          }
+          prevData.current = newData;
+          setData(newData);
+        } catch { setData(makeDefault()); }
       } else {
         const d=makeDefault();
         setData(d);
@@ -765,7 +822,6 @@ export default function App() {
   },[]);
 
   // Save to Firestore on every data change
-  const prevData = useRef(null);
   useEffect(()=>{
     if(data && data !== prevData.current){
       prevData.current = data;
@@ -781,6 +837,6 @@ export default function App() {
     </div>
   );
 
-  if(!userName) return <SplashScreen onEnter={name=>setUserName(name)}/>;
+  if(!userName) return <SplashScreen onEnter={handleEnter}/>;
   return <HomeScreen data={data} setData={setData} userName={userName} onSwitchUser={()=>setUserName(null)}/>;
 }
